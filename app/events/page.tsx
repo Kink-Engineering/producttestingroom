@@ -17,70 +17,43 @@ type GCalEvent = {
 export default function EventsPage() {
   const [items, setItems] = useState<GCalEvent[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [status, setStatus] = useState<string | null>(null);
 
-  const KEY = process.env.NEXT_PUBLIC_GOOGLE_API_KEY || '';
-  const CAL = process.env.NEXT_PUBLIC_GOOGLE_CALENDAR_ID || '';
+  const key = process.env.NEXT_PUBLIC_GOOGLE_API_KEY!;
+  const calendarId = process.env.NEXT_PUBLIC_GOOGLE_CALENDAR_ID!;
 
   const gcalUrl = useMemo(() => {
-    try {
-      const timeMin = new Date().toISOString();
-      const url = new URL(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(CAL)}/events`);
-      url.searchParams.set('key', KEY);
-      url.searchParams.set('singleEvents', 'true');
-      url.searchParams.set('orderBy', 'startTime');
-      url.searchParams.set('timeMin', timeMin);
-      url.searchParams.set('maxResults', '24');
-      url.searchParams.set(
-        'fields',
-        'items(id,summary,description,location,htmlLink,start,end,attachments(fileUrl,mimeType,title))'
-      );
-      return url.toString();
-    } catch {
-      return '';
-    }
-  }, [KEY, CAL]);
+    const now = new Date();
+    const start = new Date(now.getTime() - 24 * 60 * 60 * 1000); // include yesterday
+    const url = new URL(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`);
+    url.searchParams.set('key', key);
+    url.searchParams.set('singleEvents', 'true');
+    url.searchParams.set('orderBy', 'startTime');
+    url.searchParams.set('timeMin', start.toISOString());
+    url.searchParams.set('maxResults', '24');
+    url.searchParams.set(
+      'fields',
+      'items(id,summary,description,location,htmlLink,start,end,attachments(fileUrl,mimeType,title))'
+    );
+    return url.toString();
+  }, [key, calendarId]);
 
   useEffect(() => {
-    if (!KEY || !CAL) {
-      setErr('Missing NEXT_PUBLIC_GOOGLE_API_KEY or NEXT_PUBLIC_GOOGLE_CALENDAR_ID');
-      return;
-    }
     fetch(gcalUrl)
       .then(async (r) => {
-        setStatus(`${r.status} ${r.statusText}`);
         if (!r.ok) {
           const text = await r.text().catch(() => '');
-          throw new Error(`${r.status} ${r.statusText} — ${text.slice(0, 300)}`);
+          throw new Error(`${r.status} ${r.statusText} — ${text.slice(0, 200)}`);
         }
         return r.json();
       })
-      .then((data) => {
-        setItems(data?.items ?? []);
-        setErr(null);
-      })
-      .catch((e: any) => {
-        setErr(e?.message || 'Failed to load');
-      });
-  }, [gcalUrl, KEY, CAL]);
-
-  const maskedKey = KEY ? KEY.slice(0, 6) + '…' + KEY.slice(-4) : '(none)';
+      .then((data) => setItems(data?.items ?? []))
+      .catch((e: any) => setErr(e?.message || 'Failed to load'));
+  }, [gcalUrl]);
 
   return (
     <section className="mx-auto max-w-6xl px-4 py-12">
       <h1 className="text-3xl md:text-4xl font-semibold">Upcoming events</h1>
       <p className="mt-2 text-white/70">Data pulled from Google Calendar.</p>
-
-      {/* Always-on debug box (temporary) */}
-      <div className="mt-6 rounded-xl border border-white/15 bg-white/5 p-4 text-sm">
-        <div><b>DEBUG</b></div>
-        <div>Has NEXT_PUBLIC_GOOGLE_API_KEY: {KEY ? 'yes' : 'no'} ({maskedKey})</div>
-        <div>Has NEXT_PUBLIC_GOOGLE_CALENDAR_ID: {CAL ? 'yes' : 'no'} ({CAL || '(none)'})</div>
-        <div className="break-all">URL: {gcalUrl || '(invalid)'} </div>
-        {status && <div>Status: {status}</div>}
-        {err && <div className="text-red-400 mt-2">Error: {err}</div>}
-        {items && <div className="text-green-400 mt-2">Items: {items.length}</div>}
-      </div>
 
       <div className="mt-8">
         {err && <div className="text-red-400">Error: {err}</div>}
