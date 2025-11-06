@@ -30,6 +30,11 @@ export default function EventsPage() {
     url.searchParams.set('timeMin', timeMin);
     url.searchParams.set('maxResults', '24');
 
+    url.searchParams.set(
+  'fields',
+  'items(id,summary,description,location,htmlLink,start,end,attachments(fileUrl,mimeType,title))'
+);
+
     fetch(url.toString())
       .then(r => r.ok ? r.json() : r.text().then(t => { throw new Error(t); }))
       .then(data => setItems(data.items ?? []))
