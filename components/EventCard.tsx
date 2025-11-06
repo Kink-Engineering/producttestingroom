@@ -18,13 +18,13 @@ function formatDateRange(start?: any, end?: any) {
 
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
-  const startISO = start.dateTime ?? (start.date ? `${start.date}T00:00:00` : undefined);
+  const startISO = start?.dateTime ?? (start?.date ? `${start.date}T00:00:00` : undefined);
   const endISO = end?.dateTime ?? (end?.date ? `${end.date}T00:00:00` : undefined);
   if (!startISO) return "TBA";
 
   const sd = new Date(startISO);
   const ed = endISO ? new Date(endISO) : undefined;
-  const isAllDay = !!start.date && !start.dateTime;
+  const isAllDay = !!start?.date && !start?.dateTime;
 
   if (isAllDay) {
     return sd.toLocaleDateString(undefined, {
@@ -96,11 +96,60 @@ function stripTags(s: string): string {
   return s.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
 }
 
+/** Unwrap known redirector URLs (Google /url, /imgres; Facebook l.php, etc.). */
+function unwrapKnownRedirect(u: string): string {
+  try {
+    const url = new URL(u);
+    const host = url.hostname.toLowerCase();
+    const path = url.pathname;
+
+    // Google redirectors
+    if (host.endsWith("google.com")) {
+      if (path === "/url") {
+        // typical: https://www.google.com/url?q=TARGET
+        const q = url.searchParams.get("q") || url.searchParams.get("url");
+        if (q) return q;
+      }
+      if (path === "/imgres") {
+        // image search redirect: ...&imgurl=TARGET
+        const img = url.searchParams.get("imgurl");
+        if (img) return img;
+      }
+    }
+
+    // Facebook/Messenger redirector
+    if (
+      host.endsWith("l.facebook.com") ||
+      host.endsWith("lm.facebook.com") ||
+      host.endsWith("l.messenger.com")
+    ) {
+      const uParam = url.searchParams.get("u");
+      if (uParam) return uParam;
+    }
+
+    // Add other redirectors as needed
+
+    return u;
+  } catch {
+    return u;
+  }
+}
+
+/** Repeatedly unwrap redirectors until stable (max 3 hops). */
+function unwrapRedirectsDeep(u: string): string {
+  let prev = u;
+  for (let i = 0; i < 3; i++) {
+    const next = unwrapKnownRedirect(prev);
+    if (next === prev) break;
+    prev = next;
+  }
+  return prev;
+}
+
 /**
  * Extract the first plausible http(s) URL from messy/encoded text.
- * - Handles double HTML-entity and percent encodings.
- * - Accepts image URLs with or without extensions (common on CDNs).
- * - Trims leading/trailing quotes/parens/brackets.
+ * - Handles HTML entities, percent encodings, redirector URLs.
+ * - Prefers image URLs (jpg/png/gif/webp/svg), but accepts known CDNs w/o extension.
  */
 function extractFirstUrl(input: string): string | undefined {
   if (!input) return undefined;
@@ -117,9 +166,7 @@ function extractFirstUrl(input: string): string | undefined {
   // If none, strip tags and scan the plain text
   if (!candidate) {
     const text = stripTags(decoded);
-
-    // Find first http(s) URL across lines, tolerant to smart quotes
-    const anyUrl = text.match(/https?:\/\/[^\s"'<>)\]]+/i)?.[0]; // stop at whitespace or common closers
+    const anyUrl = text.match(/https?:\/\/[^\s"'<>)\]]+/i)?.[0];
     candidate = anyUrl || undefined;
   }
 
@@ -128,9 +175,8 @@ function extractFirstUrl(input: string): string | undefined {
   // Final cleanup of wrapper punctuation
   candidate = candidate.replace(/^[("'\[]+/, "").replace(/[)"'\]]+$/, "");
 
-  // Decode again if needed
-  candidate = decodeHtmlEntitiesDeep(candidate);
-  candidate = decodeUriDeep(candidate);
+  // Decode again & unwrap redirectors
+  candidate = unwrapRedirectsDeep(decodeUriDeep(decodeHtmlEntitiesDeep(candidate)));
 
   // Prefer obvious image URLs
   const isImageExt = /\.(?:png|jpe?g|gif|webp|svg)(?:\?.*)?$/i.test(candidate);
@@ -167,12 +213,12 @@ export default function EventCard({ event }: Props) {
 
   const image = cleanImageUrl(rawFromAttachment || explicitImgInDesc || anyUrlInDesc);
 
-  // Ticket link: first non-Google URL in description; else fallback to the Google event link
+  // Ticket link: first non-Google final URL in description; else fallback to the Google event link
   const ticket =
     (event.description &&
       (event.description.match(/https?:[^\s)"]+/gi) || [])
-        .map((u) => decodeHtmlEntitiesDeep(decodeUriDeep(u)))
-        .find((u) => !/google\.com/i.test(u))) ||
+        .map((u) => unwrapRedirectsDeep(decodeUriDeep(decodeHtmlEntitiesDeep(u))))
+        .find((u) => !/google\.com/i.test(new URL(u).hostname))) ||
     event.htmlLink;
 
   return (
@@ -185,7 +231,6 @@ export default function EventCard({ event }: Props) {
           className="h-48 w-full object-cover"
           loading="lazy"
           referrerPolicy="no-referrer"
-          // title helps debug: hover shows the resolved URL
           title={image}
         />
       ) : (
