@@ -10,9 +10,9 @@ export default function EventsPage() {
       <h1 className="text-3xl md:text-4xl font-semibold">Upcoming events</h1>
       <p className="mt-2 text-white/70">Data pulled from Google Calendar.</p>
       <div className="mt-8">
-        <Suspense fallback={<div className='opacity-70'>Loading events…</div>}>
-          {/* @ts-expect-error Async Server Component */}
-          <EventsList />
+       <Suspense fallback={<div className='opacity-70'>Loading events…</div>}>
+  <EventsList />
+</Suspense>
         </Suspense>
       </div>
     </section>
