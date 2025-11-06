@@ -20,12 +20,10 @@ function formatDateRange(start?: any, end?: any) {
 
   const startISO = start.dateTime ?? (start.date ? `${start.date}T00:00:00` : undefined);
   const endISO = end?.dateTime ?? (end?.date ? `${end.date}T00:00:00` : undefined);
-
   if (!startISO) return "TBA";
 
   const sd = new Date(startISO);
   const ed = endISO ? new Date(endISO) : undefined;
-
   const isAllDay = !!start.date && !start.dateTime;
 
   if (isAllDay) {
@@ -70,7 +68,6 @@ function decodeHtmlEntitiesOnce(s: string): string {
 }
 
 function decodeHtmlEntitiesDeep(s: string): string {
-  // Some descriptions are double-encoded; decode up to 3 times until stable.
   let prev = s;
   for (let i = 0; i < 3; i++) {
     const next = decodeHtmlEntitiesOnce(prev);
@@ -80,44 +77,70 @@ function decodeHtmlEntitiesDeep(s: string): string {
   return prev;
 }
 
+function decodeUriDeep(s: string): string {
+  let prev = s;
+  for (let i = 0; i < 3; i++) {
+    try {
+      const next = decodeURIComponent(prev);
+      if (next === prev) break;
+      prev = next;
+    } catch {
+      break;
+    }
+  }
+  return prev;
+}
+
+/** Remove all HTML tags and collapse whitespace/newlines. */
+function stripTags(s: string): string {
+  return s.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+}
+
 /**
- * Extract the first plausible http(s) URL in a messy/encoded string.
- * - Prefers typical image URLs (jpg, jpeg, png, gif, webp, svg) but will fall back to any http(s) URL.
- * - Strips wrapping HTML like <a href="..."> or <img src="..."> and trims trailing quotes, parens, or angle brackets.
+ * Extract the first plausible http(s) URL from messy/encoded text.
+ * - Handles double HTML-entity and percent encodings.
+ * - Accepts image URLs with or without extensions (common on CDNs).
+ * - Trims leading/trailing quotes/parens/brackets.
  */
 function extractFirstUrl(input: string): string | undefined {
-  const decoded = decodeHtmlEntitiesDeep(input);
+  if (!input) return undefined;
 
-  // If it's an anchor or img tag, try to grab href/src directly
+  // Decode entity & URI encodings repeatedly
+  let decoded = decodeHtmlEntitiesDeep(input);
+  decoded = decodeUriDeep(decoded);
+
+  // Try to capture href/src first, before stripping tags
   const href = decoded.match(/href=["']([^"']+)["']/i)?.[1];
   const srcAttr = decoded.match(/src=["']([^"']+)["']/i)?.[1];
   let candidate = href || srcAttr;
 
-  // If not found, regex the first http(s) URL
+  // If none, strip tags and scan the plain text
   if (!candidate) {
-    const anyUrl = decoded.match(/https?:\/\/[^\s"'<>)]*/i)?.[0];
+    const text = stripTags(decoded);
+
+    // Find first http(s) URL across lines, tolerant to smart quotes
+    const anyUrl = text.match(/https?:\/\/[^\s"'<>)\]]+/i)?.[0]; // stop at whitespace or common closers
     candidate = anyUrl || undefined;
   }
 
   if (!candidate) return undefined;
 
-  // Trim common trailing junk
-  candidate = candidate.replace(/[)"'>]+$/g, "").replace(/^["'(]+/g, "");
+  // Final cleanup of wrapper punctuation
+  candidate = candidate.replace(/^[("'\[]+/, "").replace(/[)"'\]]+$/, "");
 
-  // If there are nested encodings again inside candidate, decode once more
+  // Decode again if needed
   candidate = decodeHtmlEntitiesDeep(candidate);
+  candidate = decodeUriDeep(candidate);
 
-  // Final quick sanity check: keep obvious image URLs first, otherwise allow any http(s)
-  const imageLike = candidate.match(/\.(?:png|jpe?g|gif|webp|svg)(\?.*)?$/i);
-  if (imageLike) return candidate;
+  // Prefer obvious image URLs
+  const isImageExt = /\.(?:png|jpe?g|gif|webp|svg)(?:\?.*)?$/i.test(candidate);
+  if (isImageExt) return candidate;
 
-  // Some CDNs (e.g., Shopify) serve images without extension; allow known hosts
-  const okHost = /(?:cdn\.shopify\.com|kinkstore\.com|images\.unsplash\.com|lh3\.googleusercontent\.com)/i.test(
-    candidate
-  );
-  if (okHost) return candidate;
+  // Accept known CDNs even without extensions
+  const okCdns = /(cdn\.shopify\.com|kinkstore\.com|images\.unsplash\.com|lh3\.googleusercontent\.com)/i;
+  if (okCdns.test(candidate)) return candidate;
 
-  // Fallback: return candidate anyway (better to attempt render than show "No image")
+  // Fallback: return whatever we found
   return candidate;
 }
 
@@ -129,24 +152,26 @@ function cleanImageUrl(input?: string): string | undefined {
 /* ------------------------------------------------------------------- */
 
 export default function EventCard({ event }: Props) {
-  // Build a raw image source from attachments or description, then sanitize.
-  const rawImageFromAttachment =
+  // 1) Attachment image (preferred when available)
+  const rawFromAttachment =
     event.attachments?.find((a) => (a.mimeType || "").startsWith("image/"))?.fileUrl;
 
-  const rawImageFromDescription =
-    (event.description &&
-      // Prefer explicit image-like URLs in description
-      event.description.match(/https?:[^\s)'"<>]+?\.(?:png|jpe?g|gif|webp|svg)(?:\?[^\s"')<>]*)?/i)?.[0]) ||
-    event.description;
+  // 2) Image-looking URL inside description
+  const explicitImgInDesc =
+    event.description?.match(
+      /https?:[^\s)"'<>\]]+?\.(?:png|jpe?g|gif|webp|svg)(?:\?[^\s"')\]]*)?/i
+    )?.[0];
 
-  const image = cleanImageUrl(rawImageFromAttachment || rawImageFromDescription);
+  // 3) Fallback to any URL in the description (the cleaner will decide)
+  const anyUrlInDesc = event.description;
+
+  const image = cleanImageUrl(rawFromAttachment || explicitImgInDesc || anyUrlInDesc);
 
   // Ticket link: first non-Google URL in description; else fallback to the Google event link
   const ticket =
     (event.description &&
-      event.description
-        .match(/https?:[^\s)"]+/gi)
-        ?.map((u) => decodeHtmlEntitiesDeep(u))
+      (event.description.match(/https?:[^\s)"]+/gi) || [])
+        .map((u) => decodeHtmlEntitiesDeep(decodeUriDeep(u)))
         .find((u) => !/google\.com/i.test(u))) ||
     event.htmlLink;
 
@@ -160,6 +185,8 @@ export default function EventCard({ event }: Props) {
           className="h-48 w-full object-cover"
           loading="lazy"
           referrerPolicy="no-referrer"
+          // title helps debug: hover shows the resolved URL
+          title={image}
         />
       ) : (
         <div className="h-48 w-full bg-white/10 grid place-items-center text-white/50">
