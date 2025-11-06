@@ -1,3 +1,4 @@
+import React from "react";
 
 type Props = {
   event: {
@@ -13,36 +14,61 @@ type Props = {
 };
 
 function formatDateRange(start?: any, end?: any) {
-  const s = start?.dateTime || start?.date;
-  const e = end?.dateTime || end?.date;
-  if (!s) return "TBA";
-  const sd = new Date(s);
-  const ed = e ? new Date(e) : undefined;
-  const date = sd.toLocaleString(undefined, {
+  if (!start) return "TBA";
+
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+  // All-day events have `date` (no time). Timed events have `dateTime`.
+  const startISO = start.dateTime ?? (start.date ? `${start.date}T00:00:00` : undefined);
+  const endISO   = end?.dateTime ?? (end?.date ? `${end.date}T00:00:00` : undefined);
+
+  if (!startISO) return "TBA";
+
+  const sd = new Date(startISO);
+  const ed = endISO ? new Date(endISO) : undefined;
+
+  // If it's an all-day event (had only `date`), show date only.
+  const isAllDay = !!start.date && !start.dateTime;
+
+  if (isAllDay) {
+    return sd.toLocaleDateString(undefined, {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      timeZone: tz,
+    });
+  }
+
+  const startStr = sd.toLocaleString(undefined, {
     weekday: "short",
     month: "short",
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
+    timeZone: tz,
   });
+
   if (ed) {
-    const endTime = ed.toLocaleTimeString(undefined, {
+    const endStr = ed.toLocaleTimeString(undefined, {
       hour: "numeric",
       minute: "2-digit",
+      timeZone: tz,
     });
-    return `${date} – ${endTime}`;
+    return `${startStr} – ${endStr}`;
   }
-  return date;
+  return startStr;
 }
 
 export default function EventCard({ event }: Props) {
+  // Try to find an image: attachments, or first image URL in description
   const image =
     event.attachments?.find((a) => (a.mimeType || "").startsWith("image/"))?.fileUrl ||
     (event.description && event.description.match(/https?:[^\s)]+\.(?:png|jpg|jpeg|gif)/i)?.[0]) ||
     undefined;
 
+  // Ticket link: first non-Google URL in description; else fall back to the Google event link
   const ticket =
-    (event.description && event.description.match(/https?:[^\s)"]+/gi)?.find(u => !u.includes("google.com"))) ||
+    (event.description && event.description.match(/https?:[^\s)"]+/gi)?.find((u) => !u.includes("google.com"))) ||
     event.htmlLink;
 
   return (
@@ -54,7 +80,9 @@ export default function EventCard({ event }: Props) {
         <div className="h-48 w-full bg-white/10 grid place-items-center text-white/50">No image</div>
       )}
       <div className="p-5">
-        <h3 className="text-lg font-semibold leading-snug">{event.summary || "Untitled event"}</h3>
+        <h3 className="text-lg font-semibold leading-snug">
+          {event.summary || "Untitled event"}
+        </h3>
         <p className="mt-1 text-white/70 text-sm">{formatDateRange(event.start, event.end)}</p>
         {event.location && <p className="mt-1 text-white/60 text-sm">{event.location}</p>}
         <div className="mt-4">
