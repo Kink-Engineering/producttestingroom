@@ -57,46 +57,97 @@ function formatDateRange(start?: any, end?: any) {
   return startStr;
 }
 
-/* ---------- 🧹 NEW HELPER TO CLEAN IMAGE URLs ---------- */
-function cleanImageUrl(input?: string): string | undefined {
-  if (!input) return undefined;
+/* ------------------ Robust URL sanitation helpers ------------------ */
 
-  // Decode common HTML entities
-  const decoded = input
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'");
-
-  // If the string contains an <a href="..."> tag, extract the href
-  const hrefMatch = decoded.match(/href=["']([^"']+)["']/i);
-  if (hrefMatch) return hrefMatch[1];
-
-  // Otherwise, grab the first http(s) URL
-  const urlMatch = decoded.match(/https?:\/\/[^\s"'<>]+/i);
-  return urlMatch ? urlMatch[0] : undefined;
+function decodeHtmlEntitiesOnce(s: string): string {
+  return s
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&#x2F;/gi, "/");
 }
 
-/* ------------------------------------------------------- */
+function decodeHtmlEntitiesDeep(s: string): string {
+  // Some descriptions are double-encoded; decode up to 3 times until stable.
+  let prev = s;
+  for (let i = 0; i < 3; i++) {
+    const next = decodeHtmlEntitiesOnce(prev);
+    if (next === prev) break;
+    prev = next;
+  }
+  return prev;
+}
+
+/**
+ * Extract the first plausible http(s) URL in a messy/encoded string.
+ * - Prefers typical image URLs (jpg, jpeg, png, gif, webp, svg) but will fall back to any http(s) URL.
+ * - Strips wrapping HTML like <a href="..."> or <img src="..."> and trims trailing quotes, parens, or angle brackets.
+ */
+function extractFirstUrl(input: string): string | undefined {
+  const decoded = decodeHtmlEntitiesDeep(input);
+
+  // If it's an anchor or img tag, try to grab href/src directly
+  const href = decoded.match(/href=["']([^"']+)["']/i)?.[1];
+  const srcAttr = decoded.match(/src=["']([^"']+)["']/i)?.[1];
+  let candidate = href || srcAttr;
+
+  // If not found, regex the first http(s) URL
+  if (!candidate) {
+    const anyUrl = decoded.match(/https?:\/\/[^\s"'<>)]*/i)?.[0];
+    candidate = anyUrl || undefined;
+  }
+
+  if (!candidate) return undefined;
+
+  // Trim common trailing junk
+  candidate = candidate.replace(/[)"'>]+$/g, "").replace(/^["'(]+/g, "");
+
+  // If there are nested encodings again inside candidate, decode once more
+  candidate = decodeHtmlEntitiesDeep(candidate);
+
+  // Final quick sanity check: keep obvious image URLs first, otherwise allow any http(s)
+  const imageLike = candidate.match(/\.(?:png|jpe?g|gif|webp|svg)(\?.*)?$/i);
+  if (imageLike) return candidate;
+
+  // Some CDNs (e.g., Shopify) serve images without extension; allow known hosts
+  const okHost = /(?:cdn\.shopify\.com|kinkstore\.com|images\.unsplash\.com|lh3\.googleusercontent\.com)/i.test(
+    candidate
+  );
+  if (okHost) return candidate;
+
+  // Fallback: return candidate anyway (better to attempt render than show "No image")
+  return candidate;
+}
+
+function cleanImageUrl(input?: string): string | undefined {
+  if (!input) return undefined;
+  return extractFirstUrl(input);
+}
+
+/* ------------------------------------------------------------------- */
 
 export default function EventCard({ event }: Props) {
-  // Find an image: attachments, or first image URL in description
-  const rawImage =
-    event.attachments?.find((a) => (a.mimeType || "").startsWith("image/"))?.fileUrl ||
-    (event.description &&
-      event.description.match(/https?:[^\s)]+\.(?:png|jpg|jpeg|gif)/i)?.[0]) ||
-    event.description ||
-    undefined;
+  // Build a raw image source from attachments or description, then sanitize.
+  const rawImageFromAttachment =
+    event.attachments?.find((a) => (a.mimeType || "").startsWith("image/"))?.fileUrl;
 
-  const image = cleanImageUrl(rawImage);
+  const rawImageFromDescription =
+    (event.description &&
+      // Prefer explicit image-like URLs in description
+      event.description.match(/https?:[^\s)'"<>]+?\.(?:png|jpe?g|gif|webp|svg)(?:\?[^\s"')<>]*)?/i)?.[0]) ||
+    event.description;
+
+  const image = cleanImageUrl(rawImageFromAttachment || rawImageFromDescription);
 
   // Ticket link: first non-Google URL in description; else fallback to the Google event link
   const ticket =
     (event.description &&
-      event.description.match(/https?:[^\s)"]+/gi)?.find(
-        (u) => !u.includes("google.com")
-      )) ||
+      event.description
+        .match(/https?:[^\s)"]+/gi)
+        ?.map((u) => decodeHtmlEntitiesDeep(u))
+        .find((u) => !/google\.com/i.test(u))) ||
     event.htmlLink;
 
   return (
@@ -107,22 +158,22 @@ export default function EventCard({ event }: Props) {
           src={image}
           alt={event.summary || ""}
           className="h-48 w-full object-cover"
+          loading="lazy"
+          referrerPolicy="no-referrer"
         />
       ) : (
         <div className="h-48 w-full bg-white/10 grid place-items-center text-white/50">
           No image
         </div>
       )}
+
       <div className="p-5">
         <h3 className="text-lg font-semibold leading-snug">
           {event.summary || "Untitled event"}
         </h3>
-        <p className="mt-1 text-white/70 text-sm">
-          {formatDateRange(event.start, event.end)}
-        </p>
-        {event.location && (
-          <p className="mt-1 text-white/60 text-sm">{event.location}</p>
-        )}
+        <p className="mt-1 text-white/70 text-sm">{formatDateRange(event.start, event.end)}</p>
+        {event.location && <p className="mt-1 text-white/60 text-sm">{event.location}</p>}
+
         <div className="mt-4">
           <a
             href={ticket}
