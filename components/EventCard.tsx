@@ -2,6 +2,26 @@
 
 import React from "react";
 
+function cleanImageUrl(input?: string): string | undefined {
+  if (!input) return undefined;
+
+  // Decode common HTML entities
+  const decoded = input
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+
+  // If the string contains an anchor, pull the href value
+  const hrefMatch = decoded.match(/href=["']([^"']+)["']/i);
+  if (hrefMatch) return hrefMatch[1];
+
+  // Otherwise, grab the first http(s) URL
+  const urlMatch = decoded.match(/https?:\/\/[^\s"'<>]+/i);
+  return urlMatch ? urlMatch[0] : undefined;
+}
+
 type GCalEvent = {
   id: string;
   summary?: string;
