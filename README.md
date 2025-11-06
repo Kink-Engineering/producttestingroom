@@ -1,5 +1,5 @@
 
-# Product Testing Room — Next.js Starter
+# Product Testing Room — Next.js Starter :)
 
 Next.js (App Router) + Tailwind site that pulls **upcoming events** from **Google Calendar** and lists them on `/events` with a "Get tickets" button from the event description.
 
@@ -39,3 +39,6 @@ On **Vercel**, set these in Project → Settings → Environment Variables. Set
 - Colors: `tailwind.config.ts` (`theme.extend.colors.brand`).
 - Layout: `app/layout.tsx`.
 - Global CSS: `app/globals.css`.
+
+
+Testing Git push from WSL!
