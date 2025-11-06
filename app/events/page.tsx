@@ -1,5 +1,5 @@
 import React, { Suspense } from "react";
-import EventsList from "./view";
+import EventsListClient from "./EventsListClient";
 
 export const dynamic = "force-dynamic";
 
@@ -10,9 +10,7 @@ export default function EventsPage() {
       <p className="mt-2 text-white/70">Data pulled from Google Calendar.</p>
       <div className="mt-8">
         <Suspense fallback={<div className="opacity-70">Loading events…</div>}>
-          {/* Server Component is fine to render here */}
-          {/* @ts-ignore */}
-          <EventsList />
+          <EventsListClient />
         </Suspense>
       </div>
     </section>
